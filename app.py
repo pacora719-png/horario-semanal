@@ -167,3 +167,94 @@ if st.button("💾 Guardar horario de la semana", type="primary", use_container_
 
     st.success(f"Horario guardado: {guardados} día(s) registrados para la semana del {fecha_inicio_semana.strftime('%d/%m/%Y')}.")
     st.info("Las horas extra, recargos, tiempo a descontar y demás detalles de nómina se completan en el ERP principal.")
+
+# =========================================================
+# SEMANA COMPLETA — TODOS LOS EMPLEADOS: editar, eliminar y descargar
+# =========================================================
+st.divider()
+st.subheader("📋 Semana completa (todos los empleados)")
+st.caption(f"Del {fecha_inicio_semana.strftime('%d/%m/%Y')} al {fecha_fin_semana.strftime('%d/%m/%Y')}")
+
+with get_connection() as conn:
+    semana_df = read_sql_query("""
+        SELECT h.id, h.empleado_id, e.nombre AS empleado, h.fecha, h.hora_entrada, h.hora_salida, h.horas_normales
+        FROM horas h JOIN empleados e ON h.empleado_id = e.id
+        WHERE h.fecha BETWEEN ? AND ?
+        ORDER BY h.fecha, e.nombre
+    """, conn, params=(str(fecha_inicio_semana), str(fecha_fin_semana)))
+
+if semana_df.empty:
+    st.info("Todavía no hay ningún registro guardado para esta semana.")
+else:
+    dias_semana_map = {i: nombre for i, nombre in enumerate(DIAS)}
+
+    def nombre_dia(fecha_str):
+        fecha_obj = datetime.strptime(str(fecha_str)[:10], "%Y-%m-%d").date()
+        return dias_semana_map[fecha_obj.weekday()]
+
+    semana_df["dia"] = semana_df["fecha"].apply(nombre_dia)
+    tabla_mostrar = semana_df[["empleado", "dia", "fecha", "hora_entrada", "hora_salida", "horas_normales"]]
+    tabla_mostrar.columns = ["Empleado", "Día", "Fecha", "Entrada", "Salida", "Horas normales"]
+    st.dataframe(tabla_mostrar, use_container_width=True, hide_index=True)
+
+    # ---------- Descargar en Excel ----------
+    import io
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        tabla_mostrar.to_excel(writer, sheet_name="Semana", index=False)
+    st.download_button(
+        "⬇️ Descargar semana en Excel",
+        data=buffer.getvalue(),
+        file_name=f"horario_semana_{fecha_inicio_semana}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+    st.divider()
+    st.markdown("**Editar o eliminar un registro**")
+    registro_id = st.selectbox(
+        "Selecciona un registro",
+        semana_df["id"].tolist(),
+        format_func=lambda x: (
+            f"{semana_df[semana_df['id']==x]['empleado'].values[0]} — "
+            f"{nombre_dia(semana_df[semana_df['id']==x]['fecha'].values[0])} "
+            f"{str(semana_df[semana_df['id']==x]['fecha'].values[0])[:10]}"
+        )
+    )
+    registro = semana_df[semana_df["id"] == registro_id].iloc[0]
+
+    with st.form("editar_registro_semana"):
+        col_e, col_s = st.columns(2)
+        with col_e:
+            try:
+                entrada_edit_default = datetime.strptime(str(registro["hora_entrada"])[:5], "%H:%M").time()
+            except Exception:
+                entrada_edit_default = time(8, 0)
+            entrada_edit = st.time_input("Hora entrada", value=entrada_edit_default)
+        with col_s:
+            try:
+                salida_edit_default = datetime.strptime(str(registro["hora_salida"])[:5], "%H:%M").time()
+            except Exception:
+                salida_edit_default = time(17, 0)
+            salida_edit = st.time_input("Hora salida", value=salida_edit_default)
+
+        col_guardar, col_eliminar = st.columns(2)
+        guardar_edicion = col_guardar.form_submit_button("💾 Guardar cambios", use_container_width=True)
+        eliminar_registro = col_eliminar.form_submit_button("🗑️ Eliminar este registro", use_container_width=True)
+
+    if guardar_edicion:
+        entrada_dt = datetime.combine(date.today(), entrada_edit)
+        salida_dt = datetime.combine(date.today(), salida_edit)
+        horas_normales_edit = min(max(0, (salida_dt - entrada_dt).total_seconds() / 3600), horas_normales_max)
+        with get_connection() as conn:
+            execute(conn, """
+                UPDATE horas SET hora_entrada=?, hora_salida=?, horas_normales=? WHERE id=?
+            """, (str(entrada_edit), str(salida_edit), round(horas_normales_edit, 4), int(registro_id)))
+        st.success("Registro actualizado.")
+        st.rerun()
+
+    if eliminar_registro:
+        with get_connection() as conn:
+            execute(conn, "DELETE FROM horas WHERE id=?", (int(registro_id),))
+        st.success("Registro eliminado.")
+        st.rerun()
