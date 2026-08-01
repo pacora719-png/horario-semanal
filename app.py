@@ -280,7 +280,7 @@ else:
                 ws_emp.column_dimensions[get_column_letter(col_idx)].width = ancho
 
     st.download_button(
-        "⬇️ Descargar semana en Excel (por empleado)",
+        "⬇️ Descargar semana en Excel (empleados con reporte)",
         data=buffer.getvalue(),
         file_name=f"horario_semana_{fecha_inicio_semana}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
