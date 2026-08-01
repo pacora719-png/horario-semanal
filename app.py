@@ -195,17 +195,92 @@ else:
         return dias_semana_map[fecha_obj.weekday()]
 
     semana_df["dia"] = semana_df["fecha"].apply(nombre_dia)
-    tabla_mostrar = semana_df[["empleado", "dia", "fecha", "hora_entrada", "hora_salida", "horas_normales"]]
-    tabla_mostrar.columns = ["Empleado", "Día", "Fecha", "Entrada", "Salida", "Horas normales"]
+
+    def calcular_horas_brutas(row):
+        try:
+            h_ent = datetime.strptime(str(row["hora_entrada"])[:5], "%H:%M")
+            h_sal = datetime.strptime(str(row["hora_salida"])[:5], "%H:%M")
+            return round(max(0, (h_sal - h_ent).total_seconds() / 3600), 4)
+        except Exception:
+            return 0.0
+
+    semana_df["horas_brutas"] = semana_df.apply(calcular_horas_brutas, axis=1)
+
+    tabla_mostrar = semana_df[["empleado", "dia", "fecha", "hora_entrada", "hora_salida", "horas_brutas", "horas_normales"]]
+    tabla_mostrar.columns = ["Empleado", "Día", "Fecha", "Entrada", "Salida", "Horas brutas", "Horas normales"]
     st.dataframe(tabla_mostrar, use_container_width=True, hide_index=True)
 
-    # ---------- Descargar en Excel ----------
+    st.markdown("**Total de horas brutas de la semana por empleado**")
+    resumen_brutas = semana_df.groupby("empleado")["horas_brutas"].sum().reset_index()
+    resumen_brutas.columns = ["Empleado", "Total horas brutas semana"]
+    st.dataframe(resumen_brutas, use_container_width=True, hide_index=True)
+
+    # ---------- Descargar en Excel: hoja Resumen + una hoja por empleado ----------
     import io
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    azul_oscuro = PatternFill(start_color="2C3E50", end_color="2C3E50", fill_type="solid")
+    amarillo = PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="solid")
+    fuente_header = Font(bold=True, color="FFFFFF")
+    fuente_negrita = Font(bold=True)
+    centrado = Alignment(horizontal="center", vertical="center")
+
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        tabla_mostrar.to_excel(writer, sheet_name="Semana", index=False)
+        # Hoja Resumen: total de horas brutas y normales por empleado
+        resumen_completo = semana_df.groupby("empleado").agg(
+            horas_brutas=("horas_brutas", "sum"),
+            horas_normales=("horas_normales", "sum")
+        ).reset_index()
+        resumen_completo.columns = ["Empleado", "Total horas brutas", "Total horas normales"]
+        resumen_completo.to_excel(writer, sheet_name="Resumen", index=False)
+
+        # Una hoja por empleado, con sus días y el total al final
+        nombres_hoja_usados = set()
+        for nombre_emp, grupo in semana_df.groupby("empleado"):
+            grupo_ordenado = grupo.sort_values("fecha")
+            tabla_emp = grupo_ordenado[["dia", "fecha", "hora_entrada", "hora_salida", "horas_brutas", "horas_normales"]].copy()
+            tabla_emp.columns = ["Día", "Fecha", "Entrada", "Salida", "Horas brutas", "Horas normales"]
+
+            # Nombre de hoja válido y único (máx 31 caracteres, sin caracteres especiales)
+            nombre_hoja = "".join(ch for ch in nombre_emp if ch not in r'[]:*?/\\')[:31] or "Empleado"
+            base = nombre_hoja
+            contador = 1
+            while nombre_hoja in nombres_hoja_usados:
+                sufijo = f"_{contador}"
+                nombre_hoja = base[:31 - len(sufijo)] + sufijo
+                contador += 1
+            nombres_hoja_usados.add(nombre_hoja)
+
+            tabla_emp.to_excel(writer, sheet_name=nombre_hoja, index=False, startrow=1)
+
+            ws_emp = writer.sheets[nombre_hoja]
+            ws_emp["A1"] = nombre_emp
+            ws_emp["A1"].font = Font(bold=True, size=13)
+            ws_emp.merge_cells("A1:F1")
+
+            fila_header = 2
+            for col_idx in range(1, 7):
+                celda = ws_emp.cell(row=fila_header, column=col_idx)
+                celda.font = fuente_header
+                celda.fill = azul_oscuro
+                celda.alignment = centrado
+
+            fila_total = fila_header + len(tabla_emp) + 1
+            ws_emp.cell(row=fila_total, column=1, value="TOTAL SEMANA").font = fuente_negrita
+            for col_idx, col_nombre in [(5, "Horas brutas"), (6, "Horas normales")]:
+                celda_total = ws_emp.cell(row=fila_total, column=col_idx, value=f"=SUM({get_column_letter(col_idx)}{fila_header+1}:{get_column_letter(col_idx)}{fila_header+len(tabla_emp)})")
+                celda_total.font = fuente_negrita
+                celda_total.fill = amarillo
+                celda_total.alignment = centrado
+
+            anchos = [12, 12, 10, 10, 13, 15]
+            for col_idx, ancho in enumerate(anchos, start=1):
+                ws_emp.column_dimensions[get_column_letter(col_idx)].width = ancho
+
     st.download_button(
-        "⬇️ Descargar semana en Excel",
+        "⬇️ Descargar semana en Excel (por empleado)",
         data=buffer.getvalue(),
         file_name=f"horario_semana_{fecha_inicio_semana}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
