@@ -211,6 +211,17 @@ else:
     )
 
     st.divider()
+    st.markdown("**⚠️ Eliminar toda la semana**")
+    st.caption(f"Borra los {len(semana_df)} registro(s) de TODOS los empleados entre el {fecha_inicio_semana.strftime('%d/%m/%Y')} y el {fecha_fin_semana.strftime('%d/%m/%Y')}. Esta acción no se puede deshacer.")
+    confirmar_borrado_semana = st.checkbox("Sí, quiero eliminar todos los registros de esta semana")
+    if st.button("🗑️ Eliminar semana completa", disabled=not confirmar_borrado_semana, use_container_width=True):
+        with get_connection() as conn:
+            execute(conn, "DELETE FROM horas WHERE fecha BETWEEN ? AND ?",
+                    (str(fecha_inicio_semana), str(fecha_fin_semana)))
+        st.success(f"Se eliminaron los registros de la semana del {fecha_inicio_semana.strftime('%d/%m/%Y')}.")
+        st.rerun()
+
+    st.divider()
     st.markdown("**Editar o eliminar un registro**")
     registro_id = st.selectbox(
         "Selecciona un registro",
