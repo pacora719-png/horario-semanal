@@ -117,15 +117,17 @@ for i, dia_nombre in enumerate(DIAS):
 
     entrada_default = time(8, 0)
     salida_default = time(17, 0)
-    libre_default = False
     if existente is not None:
         try:
             entrada_default = datetime.strptime(str(existente["hora_entrada"])[:5], "%H:%M").time()
             salida_default = datetime.strptime(str(existente["hora_salida"])[:5], "%H:%M").time()
         except Exception:
             pass
-        if float(existente["horas_normales"] or 0) == 0 and not existente["hora_entrada"]:
-            libre_default = True
+        # Ya hay un registro guardado: se respeta si tiene horas reales o no
+        libre_default = float(existente["horas_normales"] or 0) == 0 and not existente["hora_entrada"]
+    else:
+        # Sin registro todavía: el domingo viene marcado como no laboral por defecto
+        libre_default = (dia_nombre == "Domingo")
 
     with col_libre:
         no_trabajo = st.checkbox("No trabajó", value=libre_default, key=f"libre_{i}")
